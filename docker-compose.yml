@@ -1,0 +1,36 @@
+version: "3"
+services:
+  nestjs-boss-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - 5000:5000
+    depends_on:
+      - postgres
+    networks:
+      - common
+    environment:
+      NODE_ENV: production
+
+  postgres:
+    image: postgres:latest
+    restart: always
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - '5432:5432'
+    volumes:
+      - ./src/database/postgres-db-init.sql:/docker-entrypoint-initdb.d/init-script.sql
+    networks:
+      - common
+
+volumes:
+  docker-nest-postgres:
+    driver: local
+networks:
+  common:
+    driver: bridge
