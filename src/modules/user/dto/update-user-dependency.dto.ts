@@ -10,5 +10,5 @@ export class UpdateUserDependencyDto {
   @IsDefined()
   @IsUUID()
   @ApiProperty({ example: 'target-user-uuid' })
-  clerkId: string;
+  subordinateId: string;
 }

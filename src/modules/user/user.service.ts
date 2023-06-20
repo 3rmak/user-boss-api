@@ -2,6 +2,7 @@ import {
   ForbiddenException,
   InternalServerErrorException,
   NotFoundException,
+  NotImplementedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Injectable } from '@nestjs/common/decorators';
@@ -23,6 +24,8 @@ import { FilteredResponseDto } from '../../shared/dto/filtered-response.dto';
 @Injectable()
 export class UserService {
   private adminUserId: string;
+  private dbType: string;
+
   constructor(
     @InjectRepository(User) private readonly userRepository: Repository<User>,
     private configService: ConfigService,
@@ -30,6 +33,7 @@ export class UserService {
     private readonly entityManager: EntityManager,
   ) {
     this.adminUserId = configService.get<string>('DB_ADMINISTRATOR_USER_ID');
+    this.dbType = configService.get<string>('DB_TYPE');
   }
 
   public async createUser(userId: string, body: CreateUserDto): Promise<User> {
@@ -79,21 +83,18 @@ export class UserService {
   ): Promise<FilteredResponseDto<User>> {
     const { take, skip } = query;
     try {
-      const [data, total] = await this.userRepository.findAndCount({
-        where: [{ bossId: userId }, { id: userId }],
-        take,
-        skip,
-      });
-
-      return { data, total };
+      const getAllAndCountSubordinates = this.getAllAndCountSubordinatesFn(userId, take, skip);
+      return await getAllAndCountSubordinates();
     } catch (e) {
-      throw new InternalServerErrorException(`Can't retrieve users from db`);
+      throw new InternalServerErrorException(`Can't retrieve users from db. Error: ${e.message}`);
     }
   }
 
   public async updateUserDependency(userId: string, dto: UpdateUserDependencyDto): Promise<User> {
-    const user = await this.getUserById(userId);
-    const clerk = await this.getUserById(dto.clerkId);
+    const [user, clerk] = await Promise.all([
+      this.getUserById(userId),
+      this.getUserById(dto.subordinateId),
+    ]);
 
     if (user.id !== clerk.boss.id && user.id !== this.adminUserId) {
       throw new ForbiddenException(`you don't have permission to change user's boss`);
@@ -123,5 +124,59 @@ export class UserService {
 
   private async hashPassword(password: string): Promise<string> {
     return await bcrypt.hash(password, 10);
+  }
+
+  private getAllAndCountSubordinatesFn(
+    userId: string,
+    take: number,
+    skip: number,
+  ): () => Promise<FilteredResponseDto<User>> {
+    switch (this.dbType) {
+      case 'postgres':
+        return this.getSubordinatesRecursivelyPostgres.bind(this, userId, take, skip);
+    }
+
+    throw new NotImplementedException('recursive subordinate retrieving is not available yet');
+  }
+
+  private async getSubordinatesRecursivelyPostgres(
+    userId: string,
+    take: number,
+    skip: number,
+  ): Promise<FilteredResponseDto<User>> {
+    const parameters = [userId, take, skip];
+    const baseRecursiveQuery = `
+        WITH RECURSIVE subordinates AS (
+          SELECT users.id, users."email", users."fullName", users."bossId", roles.id as "roleId"
+          FROM users
+          INNER JOIN roles ON users."roleId" = roles.id
+          WHERE users.id = $1
+          
+          UNION ALL
+          
+          SELECT u.id, u."email", u."fullName", u."bossId", roles.id as "roleId"
+          FROM users u
+          INNER JOIN roles ON u."roleId" = roles.id
+          INNER JOIN subordinates s ON s.id = u."bossId"
+        )
+      `;
+    const dataQuery = `
+      ${baseRecursiveQuery}
+      SELECT subordinates.id, email, "fullName", "bossId", roles.value as role
+        FROM subordinates
+        INNER JOIN roles ON subordinates."roleId" = roles.id
+        WHERE subordinates.id <> $1 OR subordinates.id = $1
+        LIMIT $2 OFFSET $3;
+    `;
+    const totalQuery = `
+      ${baseRecursiveQuery}
+      SELECT count(*) AS total FROM subordinates;
+    `;
+
+    const [data, [{ total }]] = await Promise.all([
+      this.userRepository.query(dataQuery, parameters),
+      this.userRepository.query(totalQuery, [userId]),
+    ]);
+    return { data, total };
   }
 }

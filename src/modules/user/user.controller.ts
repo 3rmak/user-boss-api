@@ -16,6 +16,7 @@ import { PaginationDto } from '../../shared/pagination.dto';
 import { PaginatedResponseDto } from '../../shared/dto/paginated-response.dto';
 import { PaginationUtility } from '../../shared/utils/pagination.utility';
 import { JwtResolveGuard } from '../auth/jwt-resolve.guard';
+import { User } from './entity/user.entity';
 
 @ApiTags('User')
 @Controller('users')
@@ -47,7 +48,7 @@ export class UserController {
   public async getUsers(
     @Query() query: PaginationDto,
     @RequestUser() user: PayloadUser,
-  ): Promise<PaginatedResponseDto<UserResponseDto>> {
+  ): Promise<PaginatedResponseDto<User>> {
     const typeOrmQuery = this.paginationUtil.parse(query);
     const { data, total } = await this.usersService.getUsersList(user.id, typeOrmQuery);
 
@@ -56,7 +57,7 @@ export class UserController {
       perPage: typeOrmQuery.take,
       totalPages: Math.ceil(total / typeOrmQuery.take),
       total,
-      data: data.map((user) => user.toDto()),
+      data,
     };
   }
 

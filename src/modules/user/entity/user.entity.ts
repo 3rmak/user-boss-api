@@ -19,6 +19,9 @@ export class User {
   @Column({ type: 'varchar', nullable: true, default: null })
   public fullName: string;
 
+  @Column({ type: 'uuid', nullable: false })
+  public roleId: string;
+
   @ManyToOne(() => Role, (role) => role.users, { eager: true })
   @JoinColumn()
   public role: Role;
